@@ -1,6 +1,7 @@
 /*! uppie | (c) 2015 silverwind | BSD license */
-/* eslint-env browser, commonjs, amd */
+/* eslint-env browser, commonjs, amd, worker */
 /* eslint-disable strict */
+/* globals onmessage: true */
 
 (function (m) {
   if (typeof exports === "object" && typeof module === "object") // CommonJS
@@ -15,15 +16,15 @@
 
   return function Uppie(opts) {
     return function (node, cb) {
-      if (/^input$/i.test(node.tagName) && node.type === "file") {
+      if (node.tagName.toLowerCase() === "input" && node.type === "file") {
         node.addEventListener("change", function (event) {
           if (!event.target.files || !event.target.files.length) return;
           if (gfd in event.target) {
-            newDirectoryApi(event.target, opts, cb);
+            call(newDirectoryApi, event.target, opts, cb);
           } else if ("webkitRelativePath" in event.target.files[0]) {
-            oldDirectoryApi(event.target, opts, cb);
+            call(oldDirectoryApi, event.target, opts, cb);
           } else {
-            multipleApi(event.target, cb);
+            call(multipleApi, event.target, opts, cb);
           }
         });
       } else {
@@ -34,14 +35,34 @@
           event.preventDefault();
           var dataTransfer = event.dataTransfer;
           if (gfd in dataTransfer) {
-            newDirectoryApi(dataTransfer, opts, cb);
+            call(newDirectoryApi, dataTransfer, opts, cb);
           } else if (dataTransfer.items) {
-            oldDropApi(dataTransfer.items, opts, cb);
+            call(oldDropApi, dataTransfer.items, opts, cb);
           }
         });
       }
     };
   };
+
+  function call(fn, input, opts, cb) {
+    if (!opts.worker) return fn(input, opts, cb);
+    canUseWorker().then(function (can) {
+      if (!can) return fn(input, opts, cb);
+
+      // There be dragons
+      fn = String(fn);
+      fn = fn.replace(/^.+{\n/g, "");
+      fn = "onmessage = function(e) {var input = e.data[0], opts = e.data[1];" + fn;
+      fn = fn.replace("cb(fd, files)", "postMessage([fd, files])");
+      var worker = createWorker(fn);
+      worker.onmessage = function (e) {
+        console.log("done");
+        cb(e.data[0], e.data[1]);
+      };
+      console.log(typeof input, input);
+      worker.postMessage([input, opts]);
+    });
+  }
 
   // API implemented in Firefox 42+ and Edge
   function newDirectoryApi(input, opts, cb) {
@@ -74,7 +95,9 @@
     input.getFilesAndDirectories().then(function (entries) {
       new Promise(function (resolve) {
         iterate(entries, "/", resolve);
-      }).then(cb.bind(null, fd, files));
+      }).then(function () {
+        cb(fd, files);
+      });
     });
   }
 
@@ -89,7 +112,7 @@
   }
 
   // fallback for files without directories
-  function multipleApi(input, cb) {
+  function multipleApi(input, opts, cb) {
     var fd = new FormData(), files = [];
     [].slice.call(input.files).forEach(function (file) {
       fd.append(file.name, file, file.name);
@@ -99,7 +122,7 @@
   }
 
   // old drag and drop API implemented in Chrome 11+
-  function oldDropApi(items, opts, cb) {
+  function oldDropApi(input, opts, cb) {
     var fd = new FormData(), files = [], rootPromises = [];
 
     function readEntries(entry, reader, oldEntries, cb) {
@@ -137,7 +160,7 @@
       });
     }
 
-    [].slice.call(items).forEach(function (entry) {
+    [].slice.call(input).forEach(function (entry) {
       entry = entry.webkitGetAsEntry();
       if (entry) {
         rootPromises.push(new Promise(function (resolve) {
@@ -153,6 +176,24 @@
         }));
       }
     });
-    Promise.all(rootPromises).then(cb.bind(null, fd, files));
+    Promise.all(rootPromises).then(function () {
+      cb(fd, files);
+    });
+  }
+
+  function createWorker(fn) {
+    var str = new Blob(["(", typeof fn === "function" ? String(fn) : fn, ")()"]);
+    return new Worker(URL.createObjectURL(str));
+  }
+
+  function canUseWorker() {
+    return new Promise(function (resolve) {
+      createWorker(function () {
+        postMessage(typeof FormData === "function");
+        close();
+      }).onmessage = function (e) {
+        resolve(e.data);
+      };
+    });
   }
 });
