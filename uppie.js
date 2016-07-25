@@ -53,7 +53,7 @@
             });
           } else {
             if (entry.name) {
-              var p = (path + entry.name).replace(/^[\/\\]/, "");
+              var p = "/" + (path + entry.name).replace(/^[\/\\]/, "");
               fd.append("file", entry, p);
               files.push(p);
             }
@@ -74,8 +74,9 @@
   function arrayApi(input, cb) {
     var fd = new FormData(), files = [];
     [].slice.call(input.files).forEach(function(file) {
-      fd.append("file", file, file.webkitRelativePath || file.name);
-      files.push(file.webkitRelativePath || file.name);
+      var p = "/" + (file.webkitRelativePath || file.name);
+      fd.append("file", file, p);
+      files.push(p);
     });
     cb(fd, files);
   }
@@ -104,7 +105,7 @@
           promises.push(new Promise(function(resolve) {
             if (entry.isFile) {
               entry.file(function(file) {
-                var p = path + "/" + file.name;
+                var p = "/" + path + "/" + file.name;
                 fd.append("file", file, p);
                 files.push(p);
                 resolve();
@@ -122,8 +123,9 @@
         rootPromises.push(new Promise(function(resolve) {
           if (entry.isFile) {
             entry.file(function(file) {
-              fd.append("file", file, file.name);
-              files.push(file.name);
+              var p = "/" + file.name;
+              fd.append("file", file, p);
+              files.push(p);
               resolve();
             }, resolve.bind());
           } else if (entry.isDirectory) {
